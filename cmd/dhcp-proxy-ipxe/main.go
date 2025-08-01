@@ -11,6 +11,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -19,6 +20,11 @@ import (
 
 	"github.com/utkuozdemir/dhcp-proxy-ipxe/internal/server"
 	"github.com/utkuozdemir/dhcp-proxy-ipxe/internal/version"
+)
+
+const (
+	extraKernelArgsEnvVar = "EXTRA_KERNEL_ARGS"
+	extraKernelArgsFlag   = "extra-kernel-args"
 )
 
 var (
@@ -31,11 +37,11 @@ var rootCmd = &cobra.Command{
 	Use:     version.Name,
 	Short:   "Run the server",
 	Version: version.Tag,
-	Args:    cobra.NoArgs,
+	Args:    cobra.ArbitraryArgs,
 	PersistentPreRun: func(cmd *cobra.Command, _ []string) {
 		cmd.SilenceUsage = true // if the args are parsed fine, no need to show usage
 	},
-	RunE: func(cmd *cobra.Command, _ []string) error {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		logger, err := initLogger()
 		if err != nil {
 			return fmt.Errorf("failed to create logger: %w", err)
@@ -43,7 +49,7 @@ var rootCmd = &cobra.Command{
 
 		defer logger.Sync() //nolint:errcheck
 
-		return run(cmd.Context(), logger)
+		return run(cmd.Context(), args, logger)
 	},
 }
 
@@ -58,7 +64,9 @@ func initLogger() (*zap.Logger, error) {
 	return loggerConfig.Build(zap.AddStacktrace(zapcore.FatalLevel)) // only print stack traces for fatal errors)
 }
 
-func run(ctx context.Context, logger *zap.Logger) error {
+func run(ctx context.Context, args []string, logger *zap.Logger) error {
+	serverOptions.ExtraKernelArgs = getExtraKernelArgs(args, logger)
+
 	prov := server.New(serverOptions, logger)
 
 	if err := prov.Run(ctx); err != nil {
@@ -66,6 +74,31 @@ func run(ctx context.Context, logger *zap.Logger) error {
 	}
 
 	return nil
+}
+
+func getExtraKernelArgs(args []string, logger *zap.Logger) string {
+	if serverOptions.ExtraKernelArgs != "" {
+		logger.Info(fmt.Sprintf("use extra kernel args from %q flag", "--"+extraKernelArgsFlag), zap.String("args", serverOptions.ExtraKernelArgs))
+
+		return serverOptions.ExtraKernelArgs
+	}
+
+	kernelArgsEnv := os.Getenv(extraKernelArgsEnvVar)
+	if kernelArgsEnv != "" {
+		logger.Info(fmt.Sprintf("use extra kernel args from %q environment variable", extraKernelArgsEnvVar), zap.String("args", kernelArgsEnv))
+
+		return kernelArgsEnv
+	}
+
+	if len(args) > 0 {
+		joined := strings.Join(args, " ")
+
+		logger.Info("use extra kernel args from command line arguments", zap.String("args", joined))
+
+		return joined
+	}
+
+	return ""
 }
 
 func main() {
@@ -106,18 +139,18 @@ func init() {
 
 	rootCmd.Flags().StringSliceVar(&serverOptions.Extensions, "extensions", serverOptions.Extensions,
 		"List of Talos extensions to use. The extensions will be used to generate schematic ID from the image factory.")
-	rootCmd.Flags().StringSliceVar(&serverOptions.ExtraKernelArgs, "extra-kernel-args", serverOptions.ExtraKernelArgs,
-		"List of extra kernel arguments to use. The arguments will be used to generate schematic ID from the image factory.")
+	rootCmd.Flags().StringVarP(&serverOptions.ExtraKernelArgs, extraKernelArgsFlag, "k", serverOptions.ExtraKernelArgs,
+		fmt.Sprintf("List of extra kernel arguments to use. "+
+			"They can be used, e.g., to connect the machines to Omni over SideroLink."+
+			"The arguments will be used to generate schematic ID from the image factory. "+
+			"These extra args can also be set via the %q environment variable or via command line arguments.", extraKernelArgsEnvVar))
 
 	rootCmd.Flags().StringVar(&serverOptions.TalosVersion, "talos-version", serverOptions.TalosVersion, "The Talos version to use.")
 
-	// machine config options
-
-	rootCmd.Flags().StringVar(&serverOptions.MachineConfig.OmniSiderolinkAPIURL, "omni-siderolink-api-url", serverOptions.MachineConfig.OmniSiderolinkAPIURL,
-		"The Omni Siderolink API URL to use in the machine config, e.g., \"https://<YOUR-INSTANCE>.siderolink.omni.siderolabs.io?jointoken=<YOUR-JOIN-TOKEN>\". "+
-			"This can be specified to connect the machine to an Omni instance.")
-	rootCmd.Flags().IntVar(&serverOptions.MachineConfig.OmniEventsPort, "omni-events-port", serverOptions.MachineConfig.OmniEventsPort,
-		"The port to use for the Omni events sink. This is required for Omni to receive events from the machine. No-op if the Omni Siderolink API URL is not specified.")
-	rootCmd.Flags().IntVar(&serverOptions.MachineConfig.OmniKmsgLogPort, "omni-kmsg-log-port", serverOptions.MachineConfig.OmniKmsgLogPort,
-		"The port to use for the Omni kmsg log. This is required for Omni to receive kernel messages from the machine. No-op if the Omni Siderolink API URL is not specified.")
+	// Omni options
+	// todo: disabled for now, we can re-enable it after https://github.com/siderolabs/omni/issues/1375 for better UX
+	// rootCmd.Flags().StringVar(&serverOptions.Omni.APIEndpoint, "omni-api-endpoint", serverOptions.Omni.APIEndpoint,
+	//	"The endpoint of the Omni API. If specified, Talos machines will be connected to Omni.")
+	// rootCmd.Flags().BoolVar(&serverOptions.Omni.APIInsecureSkipTLSVerify, "omni-api-insecure-skip-tls-verify", serverOptions.Omni.APIInsecureSkipTLSVerify,
+	//	"Skip TLS verification for the Omni API endpoint. This is useful for development purposes, but should not be used in production.")
 }

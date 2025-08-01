@@ -10,18 +10,22 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/jackpal/gateway"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/utkuozdemir/dhcp-proxy-ipxe/internal/server/config"
 	"github.com/utkuozdemir/dhcp-proxy-ipxe/internal/server/dhcp"
 	"github.com/utkuozdemir/dhcp-proxy-ipxe/internal/server/imagefactory"
-	"github.com/utkuozdemir/dhcp-proxy-ipxe/internal/server/ip"
 	"github.com/utkuozdemir/dhcp-proxy-ipxe/internal/server/ipxe"
 	"github.com/utkuozdemir/dhcp-proxy-ipxe/internal/server/machineconfig"
+	"github.com/utkuozdemir/dhcp-proxy-ipxe/internal/server/omni"
 	"github.com/utkuozdemir/dhcp-proxy-ipxe/internal/server/server"
 	"github.com/utkuozdemir/dhcp-proxy-ipxe/internal/server/tftp"
 )
+
+// OmniEndpointEnvVar is the environment variable that contains the Omni endpoint.
+const OmniEndpointEnvVar = "OMNI_ENDPOINT"
 
 // Server implements the server.
 type Server struct {
@@ -42,22 +46,24 @@ func New(options Options, logger *zap.Logger) *Server {
 //
 //nolint:gocyclo,cyclop
 func (s *Server) Run(ctx context.Context) error {
-	apiAdvertiseAddress, err := s.determineAPIAdvertiseAddress()
+	var err error
+
+	s.options.APIAdvertiseAddress, err = s.determineAPIAdvertiseAddress()
 	if err != nil {
 		return fmt.Errorf("failed to determine API advertise address: %w", err)
 	}
 
-	dhcpProxyIfaceOrIP := s.options.DHCPProxyIfaceOrIP
-	if dhcpProxyIfaceOrIP == "" {
-		dhcpProxyIfaceOrIP = apiAdvertiseAddress
+	if s.options.DHCPProxyIfaceOrIP == "" {
+		s.logger.Info("DHCP proxy interface or IP is not explicitly defined, the interface of the API advertise address will be used by the DHCP proxy",
+			zap.String("address", s.options.APIAdvertiseAddress))
+
+		s.options.DHCPProxyIfaceOrIP = s.options.APIAdvertiseAddress
 	}
 
-	configServerEnabled := s.options.MachineConfig.OmniSiderolinkAPIURL != ""
+	configServerEnabled := s.options.Omni.APIEndpoint != ""
 
 	s.logger.Info("starting server",
 		zap.Any("options", s.options),
-		zap.String("api_advertise_address", apiAdvertiseAddress),
-		zap.String("dhcp_proxy_iface_or_ip", dhcpProxyIfaceOrIP),
 	)
 
 	var configHandler http.Handler
@@ -65,7 +71,13 @@ func (s *Server) Run(ctx context.Context) error {
 	if configServerEnabled {
 		var machineConfig []byte
 
-		if machineConfig, err = machineconfig.Build(s.options.MachineConfig); err != nil {
+		var omniConnOpts omni.ConnectionOptions
+
+		if omniConnOpts, err = omni.GetConnectionOptions(ctx, s.options.Omni.APIEndpoint, s.options.Omni.APIInsecureSkipTLSVerify, s.logger); err != nil {
+			return fmt.Errorf("failed to get Omni connection options: %w", err)
+		}
+
+		if machineConfig, err = machineconfig.Build(omniConnOpts); err != nil {
 			return fmt.Errorf("failed to build machine config: %w", err)
 		}
 
@@ -81,7 +93,7 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 
 	ipxeHandler, err := ipxe.NewHandler(configServerEnabled, imageFactoryClient, ipxe.HandlerOptions{
-		APIAdvertiseAddress: apiAdvertiseAddress,
+		APIAdvertiseAddress: s.options.APIAdvertiseAddress,
 		APIPort:             s.options.APIPort,
 		Extensions:          s.options.Extensions,
 		ExtraKernelArgs:     s.options.ExtraKernelArgs,
@@ -100,7 +112,7 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 
 	if !s.options.DisableDHCPProxy {
-		dhcpProxy := dhcp.NewProxy(apiAdvertiseAddress, s.options.APIPort, dhcpProxyIfaceOrIP, s.logger.With(zap.String("component", "dhcp_proxy")))
+		dhcpProxy := dhcp.NewProxy(s.options.APIAdvertiseAddress, s.options.APIPort, s.options.DHCPProxyIfaceOrIP, s.logger.With(zap.String("component", "dhcp_proxy")))
 
 		components = append(components, component{dhcpProxy.Run, "DHCP proxy"})
 	}
@@ -151,17 +163,20 @@ func (s *Server) runComponents(ctx context.Context, components []component) erro
 
 func (s *Server) determineAPIAdvertiseAddress() (string, error) {
 	if s.options.APIAdvertiseAddress != "" {
+		s.logger.Info("using explicit API advertise address", zap.String("address", s.options.APIAdvertiseAddress))
+
 		return s.options.APIAdvertiseAddress, nil
 	}
 
-	routableIPs, err := ip.RoutableIPs()
+	defaultSourceIP, err := gateway.DiscoverInterface()
 	if err != nil {
-		return "", fmt.Errorf("failed to get routable IPs: %w", err)
+		return "", fmt.Errorf("failed to discover default source IP: %w", err)
 	}
 
-	if len(routableIPs) != 1 {
-		return "", fmt.Errorf(`expected exactly one routable IP, got %d: %v. specify API advertise address explicitly`, len(routableIPs), routableIPs)
-	}
+	ip := defaultSourceIP.String()
 
-	return routableIPs[0], nil
+	s.logger.Info("API advertise address is not explicitly defined, the IP on the default interface will be used as the API advertise address",
+		zap.String("address", defaultSourceIP.String()))
+
+	return ip, nil
 }

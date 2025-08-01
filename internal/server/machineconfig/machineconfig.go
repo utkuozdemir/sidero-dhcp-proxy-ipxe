@@ -17,22 +17,15 @@ import (
 	"github.com/siderolabs/talos/pkg/machinery/config/types/meta"
 	"github.com/siderolabs/talos/pkg/machinery/config/types/runtime"
 	"github.com/siderolabs/talos/pkg/machinery/config/types/siderolink"
+
+	"github.com/utkuozdemir/dhcp-proxy-ipxe/internal/server/omni"
 )
 
 const siderolinkAddress = "fdae:41e4:649b:9303::1"
 
-// Options defines the options for building the machine configuration.
-type Options struct {
-	OmniSiderolinkAPIURL string
-	OmniJoinToken        string
-
-	OmniEventsPort  int
-	OmniKmsgLogPort int
-}
-
 // Build builds the machine configuration for the server.
-func Build(options Options) ([]byte, error) {
-	apiURL, err := url.Parse(options.OmniSiderolinkAPIURL)
+func Build(omniConnOpts omni.ConnectionOptions) ([]byte, error) {
+	apiURL, err := url.Parse(omniConnOpts.SiderolinkAPIURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse API URL: %w", err)
 	}
@@ -43,9 +36,9 @@ func Build(options Options) ([]byte, error) {
 	}
 
 	eventSinkConfig := runtime.NewEventSinkV1Alpha1()
-	eventSinkConfig.Endpoint = net.JoinHostPort(siderolinkAddress, strconv.Itoa(options.OmniEventsPort))
+	eventSinkConfig.Endpoint = net.JoinHostPort(siderolinkAddress, strconv.Itoa(omniConnOpts.EventsPort))
 
-	kmsgLogURL, err := url.Parse("tcp://" + net.JoinHostPort(siderolinkAddress, strconv.Itoa(options.OmniKmsgLogPort)))
+	kmsgLogURL, err := url.Parse("tcp://" + net.JoinHostPort(siderolinkAddress, strconv.Itoa(omniConnOpts.KmsgLogPort)))
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse kmsg log URL: %w", err)
 	}

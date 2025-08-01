@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/siderolabs/talos/pkg/machinery/constants"
 	"go.uber.org/zap"
@@ -44,8 +45,8 @@ type ImageFactoryClient interface {
 type HandlerOptions struct {
 	APIAdvertiseAddress string
 	TalosVersion        string
+	ExtraKernelArgs     string
 	Extensions          []string
-	ExtraKernelArgs     []string
 	APIPort             int
 }
 
@@ -158,7 +159,7 @@ func NewHandler(configServerEnabled bool, imageFactoryClient ImageFactoryClient,
 
 	logger.Info("successfully patched iPXE binaries")
 
-	kernelArgs := options.ExtraKernelArgs
+	kernelArgs := strings.Fields(options.ExtraKernelArgs)
 
 	if configServerEnabled {
 		apiHostPort := net.JoinHostPort(options.APIAdvertiseAddress, strconv.Itoa(options.APIPort))

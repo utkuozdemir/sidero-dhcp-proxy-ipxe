@@ -44,6 +44,8 @@ func (p *Proxy) Run(ctx context.Context) error {
 		return fmt.Errorf("failed to determine interface: %w", err)
 	}
 
+	p.logger.Info("starting the DHCP proxy", zap.String("interface", iface))
+
 	server, err := server4.NewServer(iface, nil, p.handlePacket())
 	if err != nil {
 		return fmt.Errorf("failed to create DHCP server: %w", err)

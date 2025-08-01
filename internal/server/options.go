@@ -4,9 +4,7 @@
 
 package server
 
-import (
-	"github.com/utkuozdemir/dhcp-proxy-ipxe/internal/server/machineconfig"
-)
+import "github.com/utkuozdemir/dhcp-proxy-ipxe/internal/server/omni"
 
 // Options contains the server options.
 type Options struct {
@@ -16,9 +14,9 @@ type Options struct {
 	APIAdvertiseAddress    string
 	DHCPProxyIfaceOrIP     string
 	TalosVersion           string
+	ExtraKernelArgs        string
 	Extensions             []string
-	ExtraKernelArgs        []string
-	MachineConfig          machineconfig.Options
+	Omni                   omni.Options
 	APIPort                int
 	DisableDHCPProxy       bool
 	SecureBootEnabled      bool
@@ -30,11 +28,7 @@ func DefaultOptions() Options {
 		ImageFactoryBaseURL:    "https://factory.talos.dev",
 		ImageFactoryPXEBaseURL: "https://pxe.factory.talos.dev",
 		APIPort:                50084,
-		MachineConfig: machineconfig.Options{
-			OmniEventsPort:  8090,
-			OmniKmsgLogPort: 8092,
-		},
-		Extensions:   []string{"siderolabs/hello-world-service"},
-		TalosVersion: "v1.10.5",
+		Extensions:             []string{"siderolabs/hello-world-service"},
+		TalosVersion:           "v1.10.6",
 	}
 }
